@@ -1,20 +1,17 @@
 # -*- coding: utf-8 -*-
-"""EMH_PredicciónNúmeroEspeciesColeopteraAntioquia.ipynb
+"""EMH_Predicción_número_especies_coleoptera_antioquia.py
 
-Original file is located at
-    https://colab.research.google.com/drive/1_yzQrLn3313dN8MyaY_yJ9T4i_XKFELy
+Enlace GitHub https://github.com/EstebanMH-SiB/modelPredictColeopteraSpecies
 
 # Modelo de predicción para el número de especies de Coleoptera en el Departamento de Antioquia
 
 
-## Etapa 1: Carga de los datos.
-
-Se cargan las librerías necesarias
+## Etapa 0: Cargan de librerías necesarias
 """
 
 # Importa las librerías necesarias
 import os 
-import rasterio
+import rasterstats
 import pandas as pd 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,7 +27,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, ndcg_score
 from tensorflow.keras import layers, models
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Normalization, Rescaling
@@ -47,6 +44,7 @@ from rasterio.transform import from_origin
 os.chdir("/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos")
 coleopteros_colombia_completo = pd.read_csv('coleopteraColombia/verbatim.txt', encoding = "utf8", sep="\t")
 coleopteros_colombia = pd.read_csv('coleopteraColombia/combinadoRaster.csv', encoding = "utf8", sep=",")
+coleopteros_colombia = pd.read_csv('coleopterosColombia2025/verbatim.txt', encoding = "utf8", sep="\t")
 
 plantae_colombia = pd.read_csv('PlantaeColombia/verbatim.txt', encoding = "utf8", sep="\t", usecols=['gbifID', 'occurrenceID', 'basisOfRecord', 'institutionID', 'institutionCode', 'collectionCode', 'catalogNumber', 'type', 'license', 'datasetID', 'datasetName', 'occurrenceRemarks', 'recordedBy', 'individualCount', 'sex', 'eventID', 'samplingProtocol', 'samplingEffort', 'eventDate', 'year', 'month', 'day', 'habitat', 'continent', 'waterBody', 'country', 'countryCode', 'stateProvince', 'county', 'municipality', 'locality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDepthInMeters', 'maximumDepthInMeters', 'locationRemarks', 'decimalLatitude', 'decimalLongitude', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'taxonID', 'scientificName', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'specificEpithet', 'infraspecificEpithet', 'taxonRank', 'scientificNameAuthorship', 'identifiedBy', 'dateIdentified', 'bibliographicCitation', 'previousIdentifications'])
 
@@ -66,10 +64,10 @@ ColombiaGrilla10x10 =gpd.read_file("Grilla10x10/ColombiaGrilla10x10-WGS84.shp", 
 
 
 with rasterio.open('/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/astergdem2.tif') as src:
-        astergdem2 = src.read()
+        astergdem2 = src.read(1)
 
 with rasterio.open('/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/Escenario_Precipitacion_1976_2005/ECC_Prcp_GeoTiff_2011_2040/ECC_Prcp_1976_2005_100K_2015.tif') as src:
-        Escenario_Precipitacion_1976_2005 = src.read()
+        Escenario_Precipitacion_1976_2005 = src.read(1)
  
 
 
@@ -88,15 +86,14 @@ coleopteros_colombia = coleopteros_colombia.drop(columns=['accessRights', 'langu
 
 coleopteros_colombia = coleopteros_colombia.dropna(subset=['decimalLatitude', 'decimalLongitude'])
 
-plantaeColombia = plantaeColombia.dropna(subset=['decimalLatitude', 'decimalLongitude'])
+plantae_colombia = plantae_colombia.dropna(subset=['decimalLatitude', 'decimalLongitude'])
 
-# Reemplazar las , por. y quitar los espacios en blanco    
+# Reemplazar las , por. y quitar los espacios en blanco para las coordenadas   
 coleopteros_colombia[['decimalLongitude']]=coleopteros_colombia[['decimalLongitude']].replace(',', '.', regex=True).replace(' ', '', regex=True).astype(float)
 coleopteros_colombia[['decimalLatitude']]=coleopteros_colombia[['decimalLatitude']].replace(',', '.', regex=True).replace(' ', '', regex=True).astype(float)
 
 
-
-
+coleopteros_colombia = pd.read_csv('ColeopteroCompletaExtra.txt', encoding = "utf8", sep="\t")
 
 # Crear columna con las coordenadas para hacer el cruce con las capas vectoriales
 
@@ -104,7 +101,7 @@ coleopteros_colombia[['decimalLatitude', 'decimalLongitude']] = coleopteros_colo
 coleopteros_colombia['Coordinates'] = list(zip(coleopteros_colombia.decimalLongitude, coleopteros_colombia.decimalLatitude))
 coleopteros_colombia['Coordinates'] = coleopteros_colombia['Coordinates'].apply(Point)
 coleopteros_colombia = gpd.GeoDataFrame(coleopteros_colombia, geometry='Coordinates')
-geo.crs = {'init' :'epsg:4326'}
+coleopteros_colombia.crs = {'init' :'epsg:4326'}
 
 
 #Realizar cruces Geo radiacion
@@ -147,22 +144,55 @@ coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'GRIDCO
 coleopteros_colombia.rename(columns={'RANGO': 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010'}, inplace=True)
 
 
+#Realizar cruces VelocidadViento
+coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Velocidad_viento_10_mtrs_altura_Mensual_2000_2010, how="left", op="intersects")
+
+coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'GRIDCODE','PeriodoIni', 'PeriodoFin'])
+coleopteros_colombia.rename(columns={'RANGO': 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010'}, inplace=True)
+
+
+
+
+coleopteros_colombia['elevation'] = rasterstats.point_query(coleopteros_colombia.geometry, astergdem2, interpolate='nearest')
+
+
+coleopteros_colombia['elevation'] = rasterstats.point_query(coleopteros_colombia.geometry, Escenario_Precipitacion_1976_2005, interpolate='nearest')
+
+
+# Convert the DataFrame to a GeoDataFrame
+# Create a GeoDataFrame from the DataFrame's lat/lon coordinates
+geometry = [Point(lon, lat) for lon, lat in zip(coleopteros_colombia['decimalLongitude'], coleopteros_colombia['decimalLatitude'])]
+gdf = gpd.GeoDataFrame(coleopteros_colombia, geometry=geometry)
+gdf.set_crs('EPSG:4326', allow_override=True, inplace=True)
+raster_file = '/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/astergdem2.tif'
+results = rasterstats.point_query(gdf, raster_file)
+coleopteros_colombia['elevacion'] = results
+
+raster_file = '/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/Escenario_Precipitacion_1976_2005/ECC_Prcp_GeoTiff_2011_2040/ECC_Prcp_1976_2005_100K_2015.tif' 
+results = rasterstats.point_query(gdf, raster_file)
+coleopteros_colombia['Escenario_Precipitacion_1976_2005'] = results
+
+
+coleopteros_colombia.to_csv( "ColeopteroCompletaExtra"+'.txt', sep="\t", encoding = "utf8")
+coleopteros_colombia = pd.read_csv('ColeopteroCompletaExtraRaster.csv', encoding = "utf8", sep=",")
+coleopteros_colombia.rename(columns={'SAMPLE_1': 'elevacion'}, inplace=True)
+coleopteros_colombia.rename(columns={'SAMPLE_1_2': 'Escenario_Precipitacion_1976_2005'}, inplace=True)
+
+
 
 #### Exportar los datos completos luego de haber agregado las columnas
 
 coleopteros_colombia.to_csv( "ColeopteroCompletaColombia"+'.txt', sep="\t", encoding = "utf8")
 
 #coleopteros_colombia = pd.read_csv('ColeopteroCompletaColombia.txt', encoding = "utf8", sep="\t")
+coleopteros_colombia = pd.read_csv('ColeopteroCompletaExtraRaster.txt', encoding = "utf8", sep="\t")
 
 
 # descartar los datos no etiquetados
 coleopteros_colombia = coleopteros_colombia.dropna(subset=['NumeroEspeciesFamilia'])
+coleopteros_colombia.dropna(axis=1, how='all', inplace=True)
 
 
-coleopteros_colombia['NumeroEspeciesFamilia'].max()
-coleopteros_colombia['NumeroEspeciesFamilia'].min()
-
-#  Se divide en los conjuntos de entrenamiento y prueba.
 
 
  
@@ -171,10 +201,10 @@ coleopteros_colombiaNumEspecie.dropna(axis=1, how='all', inplace=True)
 
 list(coleopteros_colombiaNumEspecie)
 
-coleopteros_colombiaNumEspecie = coleopteros_colombiaNumEspecie[['type',  'basisOfRecord',  'recordedBy',  'individualCount',  'organismQuantity',  'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'minimumElevationInMeters',  'maximumElevationInMeters',  'minimumDepthInMeters',  'maximumDepthInMeters',  'decimalLatitude',  'decimalLongitude',  'geodeticDatum',  'coordinateUncertaintyInMeters',  'earliestEraOrLowestErathem',  'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',  'NumeroEspeciesFamilia',  'ECC_Prcp_1976_2005_100K_2015',  'elevaciontiff',  'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual',  'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']]
+coleopteros_colombiaNumEspecie = coleopteros_colombiaNumEspecie[['type',  'basisOfRecord',  'recordedBy',  'individualCount',  'organismQuantity',  'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'minimumElevationInMeters',  'maximumElevationInMeters',  'minimumDepthInMeters',  'maximumDepthInMeters',  'decimalLatitude',  'decimalLongitude',  'geodeticDatum',  'coordinateUncertaintyInMeters', 'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',  'NumeroEspeciesFamilia',  'ECC_Prcp_1976_2005_100K_2015',  'elevaciontiff',  'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual',  'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']]
 
 
-categorical_features = ['type',  'basisOfRecord',  'recordedBy',   'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'geodeticDatum',   'earliestEraOrLowestErathem',  'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',   'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']
+categorical_features = ['type',  'basisOfRecord',  'recordedBy',   'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'geodeticDatum',  'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',   'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']
 
 
 cols = ['minimumElevationInMeters','maximumElevationInMeters','minimumDepthInMeters','decimalLatitude','coordinateUncertaintyInMeters','NumeroEspeciesFamilia','elevaciontiff']
@@ -189,10 +219,16 @@ categorical_features = ['Temperatura_Maxima_Media_Mensual_Promedio_Multianual_19
 
 coleopteros_colombiaNumEspecie[['Radiacion_solar_global_promedio_multianual']]=coleopteros_colombiaNumEspecie[['Radiacion_solar_global_promedio_multianual']].replace('kWh/m²', '', regex=True)
 
-for column in categorical_features:
-    coleopteros_colombiaNumEspecie[column] = le.fit_transform(coleopteros_colombiaNumEspecie[column])
 
-print(coleopteros_colombiaNumEspecie.info())
+# Crear un transformador para codificar las características categóricas
+
+
+le = LabelEncoder()
+
+for column in categorical_features:
+    coleopteros_colombia[column] = le.fit_transform(coleopteros_colombia[column])
+
+print(coleopteros_colombia.info())
 
 
 
@@ -201,32 +237,9 @@ cols = ['Radiacion_solar_global_promedio_multianual','Temperatura_Maxima_Media_M
 coleopteros_colombiaNumEspecie[cols] = coleopteros_colombiaNumEspecie[cols].astype(str)
 
 
-le = LabelEncoder()
+
 
 coleopteros_colombiaNumEspecie['Radiacion_solar_global_promedio_multianual'] = le.fit_transform(coleopteros_colombiaNumEspecie['Radiacion_solar_global_promedio_multianual'])
-
-
-
-
-
-
-
-coleopteros_colombiaNumEspecie.to_csv( "coleopteros_colombiaNumEspecie"+'.txt', sep="\t", encoding = "utf8")
-
-#coleopteros_colombiaNumEspecie = pd.read_csv('coleopteros_colombiaNumEspecie.txt', encoding = "utf8", sep="\t")
-
- 
-y = coleopteros_colombia['NumeroEspeciesFamilia'].values 
-
-arg = tf.convert_to_tensor(y, dtype=tf.float32)
-
-
-y = y.astype(np.float32) 
-
-X = coleopteros_colombia.loc[:, coleopteros_colombia.columns != "NumeroEspeciesFamilia"] 
- 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=42)
- 
 
 
 
@@ -254,38 +267,6 @@ print(coleopteros_colombia.describe(include=['object']))
 
 
 
-
-
-
-
-
-
-
-coleopteros_colombia[['type', 'basisOfRecord', 'recordedBy', 'organismQuantity', 'organismQuantityType', 'sex', 'lifeStage', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans', 'degreeOfEstablishment', 'pathway', 'occurrenceStatus', 'associatedTaxa', 'occurrenceRemarks', 'organismID', 'associatedOrganisms', 'previousIdentifications', 'organismRemarks', 'materialEntityRemarks', 'eventID', 'fieldNumber', 'eventDate', 'eventTime', 'habitat', 'samplingProtocol', 'fieldNotes', 'eventRemarks', 'locationID', 'waterBody', 'island', 'country', 'stateProvince', 'county', 'municipality', 'locality', 'verbatimLocality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'footprintSpatialFit', 'earliestEraOrLowestErathem', 'earliestPeriodOrLowestSystem', 'latestPeriodOrHighestSystem', 'earliestEpochOrLowestSeries', 'latestEpochOrHighestSeries', 'member', 'bed', 'verbatimIdentification', 'identificationQualifier', 'typeStatus', 'identifiedBy', 'identificationRemarks', 'scientificName', 'originalNameUsage', 'kingdom', 'phylum', 'class', 'order', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'genericName', 'subgenus', 'infragenericEpithet', 'specificEpithet', 'infraspecificEpithet', 'cultivarEpithet', 'taxonRank', 'verbatimTaxonRank', 'scientificNameAuthorship', 'vernacularName', 'Coordinates', 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010', 'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010', 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']] = coleopteros_colombia[['type', 'basisOfRecord', 'recordedBy', 'organismQuantity', 'organismQuantityType', 'sex', 'lifeStage', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans', 'degreeOfEstablishment', 'pathway', 'occurrenceStatus', 'associatedTaxa', 'occurrenceRemarks', 'organismID', 'associatedOrganisms', 'previousIdentifications', 'organismRemarks', 'materialEntityRemarks', 'eventID', 'fieldNumber', 'eventDate', 'eventTime', 'habitat', 'samplingProtocol', 'fieldNotes', 'eventRemarks', 'locationID', 'waterBody', 'island', 'country', 'stateProvince', 'county', 'municipality', 'locality', 'verbatimLocality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'footprintSpatialFit', 'earliestEraOrLowestErathem', 'earliestPeriodOrLowestSystem', 'latestPeriodOrHighestSystem', 'earliestEpochOrLowestSeries', 'latestEpochOrHighestSeries', 'member', 'bed', 'verbatimIdentification', 'identificationQualifier', 'typeStatus', 'identifiedBy', 'identificationRemarks', 'scientificName', 'originalNameUsage', 'kingdom', 'phylum', 'class', 'order', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'genericName', 'subgenus', 'infragenericEpithet', 'specificEpithet', 'infraspecificEpithet', 'cultivarEpithet', 'taxonRank', 'verbatimTaxonRank', 'scientificNameAuthorship', 'vernacularName', 'Coordinates', 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010', 'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010', 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']].astype('str') 
-
-
-coleopteros_colombia['recordedBy'] = coleopteros_colombia['recordedBy'].astype('str') 
-
-
-# Crear un transformador para codificar las características categóricas
-
-
-le = LabelEncoder()
-
-coleopteros_colombia['family'] = le.fit_transform(coleopteros_colombia['family'])
-
-# Definir las características categóricas que se van a codificar
-
-resultados = coleopteros_colombia[['basisOfRecord', 'recordedBy', 'organismQuantity', 'organismQuantityType', 'sex', 'lifeStage', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans', 'degreeOfEstablishment', 'pathway', 'occurrenceStatus', 'associatedTaxa', 'occurrenceRemarks', 'organismID', 'associatedOrganisms', 'previousIdentifications', 'organismRemarks', 'materialEntityRemarks', 'eventID', 'fieldNumber', 'eventDate', 'eventTime', 'habitat', 'samplingProtocol', 'fieldNotes', 'eventRemarks', 'locationID', 'waterBody', 'island', 'country', 'stateProvince', 'county', 'municipality', 'locality', 'verbatimLocality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'footprintSpatialFit', 'earliestEraOrLowestErathem', 'earliestPeriodOrLowestSystem', 'latestPeriodOrHighestSystem', 'earliestEpochOrLowestSeries', 'latestEpochOrHighestSeries', 'member', 'bed', 'verbatimIdentification', 'identificationQualifier', 'typeStatus', 'identifiedBy', 'identificationRemarks', 'scientificName', 'originalNameUsage', 'kingdom', 'phylum', 'class', 'order', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'genericName', 'subgenus', 'infragenericEpithet', 'specificEpithet', 'infraspecificEpithet', 'cultivarEpithet', 'taxonRank', 'verbatimTaxonRank', 'scientificNameAuthorship', 'vernacularName', 'Coordinates', 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010', 'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010', 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']]
-
-
-
-resultadocategoricos = coleopteros_colombia[['type', 'basisOfRecord', 'recordedBy', 'organismQuantity', 'organismQuantityType', 'sex', 'lifeStage', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans', 'degreeOfEstablishment', 'pathway', 'occurrenceStatus', 'associatedTaxa', 'occurrenceRemarks',  'associatedOrganisms', 'previousIdentifications', 'organismRemarks', 'materialEntityRemarks', 'eventID', 'fieldNumber', 'eventDate', 'eventTime', 'habitat', 'samplingProtocol', 'fieldNotes', 'eventRemarks', 'locationID', 'waterBody', 'island', 'country', 'stateProvince', 'county', 'municipality', 'locality', 'verbatimLocality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'footprintSpatialFit', 'earliestEraOrLowestErathem', 'earliestPeriodOrLowestSystem', 'latestPeriodOrHighestSystem', 'earliestEpochOrLowestSeries', 'latestEpochOrHighestSeries', 'member', 'bed', 'verbatimIdentification', 'identificationQualifier', 'typeStatus', 'identifiedBy', 'identificationRemarks', 'scientificName', 'originalNameUsage', 'kingdom', 'phylum', 'class', 'order', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'genericName', 'subgenus', 'infragenericEpithet', 'specificEpithet', 'infraspecificEpithet', 'cultivarEpithet', 'taxonRank', 'verbatimTaxonRank', 'scientificNameAuthorship', 'vernacularName', 'Coordinates', 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010', 'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010', 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']]
-print("Información del Dataset:")
-print(coleopteros_colombiaNumEspecie.info())
-
-resultadocategoricos.dropna(axis=1, how='all', inplace=True)
-
 #quitar nan con método forwarfill
 
 resultadosTipoPublicador[['type', 'basisOfRecord', 'recordedBy', 'organismQuantity', 'organismQuantityType', 'sex', 'lifeStage', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans', 'degreeOfEstablishment', 'pathway', 'occurrenceStatus', 'associatedTaxa', 'occurrenceRemarks', 'organismID', 'associatedOrganisms', 'previousIdentifications', 'organismRemarks', 'materialEntityRemarks', 'eventID', 'fieldNumber', 'eventDate', 'eventTime', 'habitat', 'samplingProtocol', 'fieldNotes', 'eventRemarks', 'locationID', 'waterBody', 'island', 'country', 'stateProvince', 'county', 'municipality', 'locality', 'verbatimLocality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'footprintSpatialFit', 'earliestEraOrLowestErathem', 'earliestPeriodOrLowestSystem', 'latestPeriodOrHighestSystem', 'earliestEpochOrLowestSeries', 'latestEpochOrHighestSeries', 'member', 'bed', 'verbatimIdentification', 'identificationQualifier', 'typeStatus', 'identifiedBy', 'identificationRemarks', 'scientificName', 'originalNameUsage', 'kingdom', 'phylum', 'class', 'order', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'genericName', 'subgenus', 'infragenericEpithet', 'specificEpithet', 'infraspecificEpithet', 'cultivarEpithet', 'taxonRank', 'verbatimTaxonRank', 'scientificNameAuthorship', 'vernacularName', 'Coordinates', 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010', 'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010', 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']] = resultadosTipoPublicador[['type', 'basisOfRecord', 'recordedBy', 'organismQuantity', 'organismQuantityType', 'sex', 'lifeStage', 'reproductiveCondition', 'behavior', 'vitality', 'establishmentMeans', 'degreeOfEstablishment', 'pathway', 'occurrenceStatus', 'associatedTaxa', 'occurrenceRemarks', 'organismID', 'associatedOrganisms', 'previousIdentifications', 'organismRemarks', 'materialEntityRemarks', 'eventID', 'fieldNumber', 'eventDate', 'eventTime', 'habitat', 'samplingProtocol', 'fieldNotes', 'eventRemarks', 'locationID', 'waterBody', 'island', 'country', 'stateProvince', 'county', 'municipality', 'locality', 'verbatimLocality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDistanceAboveSurfaceInMeters', 'maximumDistanceAboveSurfaceInMeters', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'footprintSpatialFit', 'earliestEraOrLowestErathem', 'earliestPeriodOrLowestSystem', 'latestPeriodOrHighestSystem', 'earliestEpochOrLowestSeries', 'latestEpochOrHighestSeries', 'member', 'bed', 'verbatimIdentification', 'identificationQualifier', 'typeStatus', 'identifiedBy', 'identificationRemarks', 'scientificName', 'originalNameUsage', 'kingdom', 'phylum', 'class', 'order', 'superfamily', 'family', 'subfamily', 'tribe', 'subtribe', 'genus', 'genericName', 'subgenus', 'infragenericEpithet', 'specificEpithet', 'infraspecificEpithet', 'cultivarEpithet', 'taxonRank', 'verbatimTaxonRank', 'scientificNameAuthorship', 'vernacularName', 'Coordinates', 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010', 'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010', 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010', 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']].fillna(method='ffill')
@@ -294,85 +275,30 @@ resultadosTipoPublicador[['type', 'basisOfRecord', 'recordedBy', 'organismQuanti
 
 
 
-categorical_features = ['type' ,'basisOfRecord' ,'recordedBy' ,'organismQuantityType' ,'sex' ,'lifeStage' ,'reproductiveCondition' ,'behavior' ,'establishmentMeans' ,'occurrenceStatus' ,'associatedTaxa' ,'occurrenceRemarks' ,'previousIdentifications' ,'organismRemarks' ,'eventID' ,'fieldNumber' ,'eventDate' ,'eventTime' ,'habitat' ,'samplingProtocol' ,'fieldNotes' ,'eventRemarks' ,'waterBody' ,'island' ,'country' ,'stateProvince' ,'county' ,'municipality' ,'locality' ,'verbatimLocality' ,'minimumElevationInMeters' ,'maximumElevationInMeters' ,'minimumDepthInMeters' ,'geodeticDatum' ,'coordinateUncertaintyInMeters' ,'earliestEraOrLowestErathem' ,'verbatimIdentification' ,'identificationQualifier' ,'typeStatus' ,'identifiedBy' ,'identificationRemarks' ,'scientificName' ,'kingdom' ,'phylum' ,'class' ,'order' ,'superfamily' ,'family' ,'subfamily' ,'tribe' ,'genus' ,'genericName' ,'subgenus' ,'specificEpithet' ,'infraspecificEpithet' ,'taxonRank' ,'verbatimTaxonRank' ,'scientificNameAuthorship' ,'vernacularName' ,'NumeroEspeciesFamilia' ,'Coordinates' ,'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010' ,'Radiacion_solar_global_promedio_multianual' ,'GRIDCODE_left' ,'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010' ,'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010' ,'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010' ,'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010' ,'Column 99']
-
-for column in categorical_features:
-    coleopteros_colombiaNumEspecie[column] = le.fit_transform(coleopteros_colombiaNumEspecie[column])
 
 
 
-for column in resultadocategoricos.columns:
-    if resultadocategoricos[column].dtype == 'object':  # Check for categorical columns
-        resultadosTipoPublicador[column] = le.fit_transform(resultadosTipoPublicador[column])
+coleopteros_colombiaNumEspecie.to_csv( "coleopteros_colombiaNumEspecie"+'.txt', sep="\t", encoding = "utf8")
+
+#coleopteros_colombiaNumEspecie = pd.read_csv('coleopteros_colombiaNumEspecie.txt', encoding = "utf8", sep="\t")
 
 
-one_hot_encoder = ColumnTransformer(
-    transformers=[
-        ('cat', OneHotEncoder(drop='first', sparse_output=False), categorical_features)
-    ],
-    remainder='passthrough'  # Deja las características numéricas tal como están
-)
+#  Se divide en los conjuntos de entrenamiento y prueba.
 
-# Aplicar la transformación al conjunto de datos
-X_train_encoded = one_hot_encoder.fit_transform(X_train)
-X_test_encoded = one_hot_encoder.transform(X_test)
-
-# Mostrar el resultado
-print(f'Número de características después de One-Hot Encoding: {X_train_encoded.shape[1]}')
-
-
-
-
-
-
-
-
-
-
-coleopteros_colombiaNumEspecie.replace([np.nan], 0)
-
-
-coleopteros_colombiaNumEspecie = coleopteros_colombiaNumEspecie.drop(columns=['individualCount', 'organismQuantity','minimumElevationInMeters','maximumElevationInMeters','minimumDepthInMeters','maximumDepthInMeters','coordinateUncertaintyInMeters','decimalLatitude','decimalLongitude','NumeroEspeciesFamilia', 'elevaciontiff', 'ECC_Prcp_1976_2005_100K_2015', 'Unnamed: 0'])
-
-
-print(coleopteros_colombiaNumEspecie.info())
-
-
-
-coleopteros_colombiaNumEspecie.replace([np.nan], 0)
-
-y = np.nan_to_num(y, nan=0)
-
-y = coleopteros_colombiaNumEspecie['NumeroEspeciesFamilia'].values 
-
+ 
+y = coleopteros_colombia['NumeroEspeciesFamilia'].values 
 
 arg = tf.convert_to_tensor(y, dtype=tf.float32)
 
 
 y = y.astype(np.float32) 
 
-X = coleopteros_colombiaNumEspecie.loc[:, coleopteros_colombiaNumEspecie.columns != "NumeroEspeciesFamilia"] 
+X = coleopteros_colombia.loc[:, coleopteros_colombia.columns != "NumeroEspeciesFamilia"] 
+
  
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=42)
- 
 
 
-X = X.loc[:, X.columns != "Unnamed: 0"] 
-
-
-
-coleopteros_colombiaNumEspecie = pd.read_csv('coleopteros_colombiaNumEspecie.txt', encoding = "utf8", sep="\t")
-
-
-X = coleopteros_colombiaNumEspecie.loc[:, coleopteros_colombiaNumEspecie.columns != "borrar"] 
-
-y = coleopteros_colombiaNumEspecie['NumeroEspeciesFamilia'].values 
-
-X.to_csv( "coleopteros_colombiaX"+'.txt', sep="\t", encoding = "utf8")
-
-X = pd.read_csv('coleopteros_colombiaX.txt', encoding = "utf8", sep="\t")
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=42)
 
 
 
@@ -418,18 +344,28 @@ optimizer = Adam(learning_rate=1e-4)
 
 model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
 
-history = model.fit(X_train, y_train, epochs=10,
+history = model.fit(X_train, y_train, epochs=50,
           validation_data=(X_test, y_test))
 
 
 #### Modelo número 2 CET como métrica
 
 
+model = Sequential()
+model.add(Dense(380, input_dim=61, activation='relu'))
+model.add(Dense(380, activation='relu')) 
+model.add(Dense(380, activation='relu')) 
+model.add(Dropout(0.5))
+model.add(Dense(380, activation='relu')) 
+model.add(Dense(380, activation='relu')) 
+model.add(Dropout(0.5))
+model.add(Dense(1))
+
 
 model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 
 # Train the model
-model.fit(X_train, y_train, epochs=50, batch_size=128)
+model.fit(X_train, y_train, epochs=50, batch_size=250)
 history = model.fit(X_train, y_train, epochs=10,
           validation_data=(X_test, y_test))
 
@@ -471,6 +407,17 @@ print(f"Test Accuracy: {model.score(X_test, y_test)}")
 
 
 
+
+model.compile(optimizer='sgd', metrics=[tfr.keras.metrics.NDCGMetric()])
+
+
+#### Comparación entre modelos
+'''
+ We used paired Wilcoxon tests and the Holm
+correction34 for multiple comparisons to test for significant differences
+between models.
+'''
+
 #### Prediccion numero especies resto familias
 
 # Predict on new data
@@ -479,8 +426,12 @@ predictions = model.predict(X_new)
 
 print("Predictions:", predictions)
 
-## Etapa 4: Validación de los modelos.
 
 
+coleopteros_colombia_exportar = coleopteros_colombia[[ 'gbifID','decimalLatitude', 'decimalLongitude', 'geodeticDatum', 'coordinateUncertaintyInMeters','scientificName']]
 
+plantae_colombia = plantae_colombia[[ 'gbifID','decimalLatitude', 'decimalLongitude', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'taxonID', 'scientificName']]
 
+plantae_colombia.to_csv( 'plantas_coordenadas'+'.txt', sep="\t", encoding = "utf8")
+
+coleopteros_colombia_exportar.to_csv( 'coleoptera_coordenadas'+'.txt', sep="\t", encoding = "utf8")

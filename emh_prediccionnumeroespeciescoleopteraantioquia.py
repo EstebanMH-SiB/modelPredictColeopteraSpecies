@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """EMH_Predicción_número_especies_coleoptera_antioquia.py
 
+
+Autor: Esteban Marentes Herrera
 Enlace GitHub https://github.com/EstebanMH-SiB/modelPredictColeopteraSpecies
 
 # Modelo de predicción para el número de especies de Coleoptera en el Departamento de Antioquia
 
 
-## Etapa 0: Cargan de librerías necesarias
 """
 
 # Importa las librerías necesarias
@@ -19,6 +20,7 @@ import seaborn as sns
 import geopandas as gpd
 import tensorflow as tf
 import keras
+import rasterio
 from shapely.geometry import Point
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder, MinMaxScaler
@@ -35,18 +37,61 @@ from keras.utils import plot_model
 from keras.optimizers import Adam
 from rasterio import mask
 from rasterio.transform import from_origin
+import dask.dataframe as dd
 
 
-## Etapa 1: Carga y limpieza de los datos
+# Se define el directorio de trabajo
 
-# Se cargan las bases de datos
+os.chdir("/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/TercerSemestre/TesisFinal/Datos")
 
-os.chdir("/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos")
-coleopteros_colombia_completo = pd.read_csv('coleopteraColombia/verbatim.txt', encoding = "utf8", sep="\t")
-coleopteros_colombia = pd.read_csv('coleopteraColombia/combinadoRaster.csv', encoding = "utf8", sep=",")
-coleopteros_colombia = pd.read_csv('coleopterosColombia2025/verbatim.txt', encoding = "utf8", sep="\t")
+# Se cargan los datos de coleoptera del mundo en chunks de 100000 datos
 
-plantae_colombia = pd.read_csv('PlantaeColombia/verbatim.txt', encoding = "utf8", sep="\t", usecols=['gbifID', 'occurrenceID', 'basisOfRecord', 'institutionID', 'institutionCode', 'collectionCode', 'catalogNumber', 'type', 'license', 'datasetID', 'datasetName', 'occurrenceRemarks', 'recordedBy', 'individualCount', 'sex', 'eventID', 'samplingProtocol', 'samplingEffort', 'eventDate', 'year', 'month', 'day', 'habitat', 'continent', 'waterBody', 'country', 'countryCode', 'stateProvince', 'county', 'municipality', 'locality', 'minimumElevationInMeters', 'maximumElevationInMeters', 'minimumDepthInMeters', 'maximumDepthInMeters', 'locationRemarks', 'decimalLatitude', 'decimalLongitude', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'taxonID', 'scientificName', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'specificEpithet', 'infraspecificEpithet', 'taxonRank', 'scientificNameAuthorship', 'identifiedBy', 'dateIdentified', 'bibliographicCitation', 'previousIdentifications'])
+chunks_list = []
+chunk_size = 1000000
+
+# Iterar sobre los chunks
+for chunk in pd.read_csv('coleoptera_completa_gbif.csv',  encoding = "utf8", sep="\t", chunksize=chunk_size, on_bad_lines='skip'):
+    chunks_list.append(chunk)
+coleoptera_completa_mundo = pd.concat(chunks_list, ignore_index=True) # concatenar los chunks juntos
+
+# Quitar las columnas que no tienen nada que ver con lo biológico
+
+coleoptera_completa_mundo_especie = coleoptera_completa_mundo.drop(columns=['datasetKey', 'publishingOrgKey', 'day', 'month', 'year', 'taxonKey', 'institutionCode', 'catalogNumber', 'recordNumber', 'rightsHolder', 'typeStatus', 'establishmentMeans', 'lastInterpreted', 'mediaType'])
+
+# Quitar los datos sin coordenadas
+
+coleoptera_completa_mundo_especie = coleoptera_completa_mundo_especie.dropna(subset=['decimalLatitude', 'decimalLongitude'])
+
+
+# Crear la columna tipo punto usando geopandas para hacer el cruce con las capas vectoriales
+
+coleoptera_completa_mundo_especie[['decimalLatitude', 'decimalLongitude']] = coleoptera_completa_mundo_especie[['decimalLatitude','decimalLongitude']].fillna(value=0)
+coleoptera_completa_mundo_especie['Coordinates'] = list(zip(coleoptera_completa_mundo_especie.decimalLongitude, coleoptera_completa_mundo_especie.decimalLatitude))
+coleoptera_completa_mundo_especie['Coordinates'] = coleoptera_completa_mundo_especie['Coordinates'].apply(Point)
+coleoptera_completa_mundo_especie = gpd.GeoDataFrame(coleoptera_completa_mundo_especie, geometry='Coordinates')
+coleoptera_completa_mundo_especie.crs = {'init' :'epsg:4326'}
+
+
+#Realizar cruces con la capa de Colombia
+
+departamento =gpd.read_file("departamento/MGN_DPTO_POLITICO.shp", encoding = "utf8") # cargar el archivo shapefile de los municipios de Colombia
+
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie, departamento, how="inner", op="intersects")
+# coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia[coleoptera_completa_mundo_especie_colombia.geometry.within(departamento.unary_union)]
+
+#Quitar las columnas extras creadas con el cruce y cambiar el nombre por departamento
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'DPTO_CCDGO', 'DPTO_NANO_', 'DPTO_CACTO', 'DPTO_NANO','Shape_Leng', 'Shape_Area', 'DPTO_CNMBR'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'stateProv': 'departamento'}, inplace=True)
+
+# Eliminar las columnas completamente vacías
+coleoptera_completa_mundo_especie_colombia.dropna(axis=1, how='all', inplace=True)
+
+#### Cargar los archivos con información adicional
+
+
+etiquetas_Coleoptera_Colombia = pd.read_csv('EtiquetasColeopteraColombia.txt', encoding = "utf8", sep="\t")
+
+plantae_colombia = pd.read_csv('PlantaeColombiaCompleto/verbatim.txt', encoding = "utf8", sep="\t", usecols=['gbifID', 'occurrenceID',  'eventDate',  'country', 'stateProvince', 'county', 'municipality', 'locality','decimalLatitude', 'decimalLongitude', 'geodeticDatum', 'coordinateUncertaintyInMeters', 'taxonID', 'scientificName', 'genus', 'specificEpithet', 'infraspecificEpithet', 'taxonRank', 'scientificNameAuthorship'])
 
 Radiacion_solar_global_promedio_multianual =gpd.read_file("Radiacion_solar_global_promedio_multianual/Shape/GDBIDEAM.CN2_Rdcn_Solar_Global_ProAnual.shp", encoding = "utf8")
 
@@ -60,148 +105,168 @@ Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010 =gpd.read_file("T
 
 Velocidad_viento_10_mtrs_altura_Mensual_2000_2010 =gpd.read_file("Velocidad_viento_10_mtrs_altura_Mensual_2000_2010/SHP/AVC2014_VlVn_10m_MM_2000_2010_01.shp", encoding = "utf8")
 
-ColombiaGrilla10x10 =gpd.read_file("Grilla10x10/ColombiaGrilla10x10-WGS84.shp", encoding = "utf8")
-
-
-with rasterio.open('/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/astergdem2.tif') as src:
+with rasterio.open('/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/TercerSemestre/TesisFinal/Datos/astergdem2.tif') as src:
         astergdem2 = src.read(1)
 
-with rasterio.open('/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/Escenario_Precipitacion_1976_2005/ECC_Prcp_GeoTiff_2011_2040/ECC_Prcp_1976_2005_100K_2015.tif') as src:
+with rasterio.open('/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/TercerSemestre/TesisFinal/Datos/Escenario_Precipitacion_1976_2005/ECC_Prcp_GeoTiff_2011_2040/ECC_Prcp_1976_2005_100K_2015.tif') as src:
         Escenario_Precipitacion_1976_2005 = src.read(1)
- 
 
 
-##  Se realiza una limpieza general de los datos
-
-### Quitar las columnas completamente vacias
-
-coleopteros_colombia.dropna(axis=1, how='all', inplace=True)
-
-### Quitar las columnas que no tienen nada que ver con lo biológico
-
-coleopteros_colombia = coleopteros_colombia.drop(columns=['accessRights', 'language','bibliographicCitation', 'modified','references','rightsHolder','institutionID','institutionCode','collectionID','collectionCode','license', 'collectionID', 'datasetID', 'collectionCode', 'datasetName', 'ownerInstitutionCode', 'informationWithheld', 'dataGeneralizations', 'dynamicProperties', 'occurrenceID', 'catalogNumber', 'recordNumber', 'recordedByID', 'georeferenceVerificationStatus', 'preparations', 'disposition', 'associatedMedia', 'associatedOccurrences', 'associatedReferences', 'associatedSequences', 'otherCatalogNumbers', 'organismScope', 'verbatimLabel', 'materialSampleID', 'parentEventID', 'eventType', 'startDayOfYear', 'endDayOfYear', 'year', 'month', 'day', 'verbatimEventDate', 'sampleSizeValue', 'sampleSizeUnit', 'samplingEffort', 'higherGeographyID', 'higherGeography', 'continent', 'locationAccordingTo', 'locationRemarks', 'islandGroup', 'countryCode', 'verbatimElevation', 'verbatimDepth', 'coordinatePrecision', 'verbatimCoordinates', 'verbatimLatitude', 'verbatimLongitude', 'verbatimCoordinateSystem', 'verbatimSRS', 'footprintWKT', 'footprintSRS', 'georeferencedBy', 'georeferencedDate', 'georeferenceProtocol', 'georeferenceSources', 'georeferenceRemarks', 'identificationID', 'identifiedByID', 'dateIdentified', 'identificationReferences', 'identificationVerificationStatus', 'taxonID', 'scientificNameID', 'nameAccordingToID', 'namePublishedInID', 'taxonConceptID', 'acceptedNameUsage', 'parentNameUsage', 'nameAccordingTo', 'namePublishedIn', 'namePublishedInYear', 'higherClassification', 'nomenclaturalCode', 'taxonomicStatus', 'nomenclaturalStatus', 'taxonRemarks'])
-
-
-### Quitar los datos sin coordenadas para Coleoptera y Plantae
-
-coleopteros_colombia = coleopteros_colombia.dropna(subset=['decimalLatitude', 'decimalLongitude'])
-
-plantae_colombia = plantae_colombia.dropna(subset=['decimalLatitude', 'decimalLongitude'])
-
-# Reemplazar las , por. y quitar los espacios en blanco para las coordenadas   
-coleopteros_colombia[['decimalLongitude']]=coleopteros_colombia[['decimalLongitude']].replace(',', '.', regex=True).replace(' ', '', regex=True).astype(float)
-coleopteros_colombia[['decimalLatitude']]=coleopteros_colombia[['decimalLatitude']].replace(',', '.', regex=True).replace(' ', '', regex=True).astype(float)
-
-
-coleopteros_colombia = pd.read_csv('ColeopteroCompletaExtra.txt', encoding = "utf8", sep="\t")
-
-# Crear columna con las coordenadas para hacer el cruce con las capas vectoriales
-
-coleopteros_colombia[['decimalLatitude', 'decimalLongitude']] = coleopteros_colombia[['decimalLatitude','decimalLongitude']].fillna(value=0)
-coleopteros_colombia['Coordinates'] = list(zip(coleopteros_colombia.decimalLongitude, coleopteros_colombia.decimalLatitude))
-coleopteros_colombia['Coordinates'] = coleopteros_colombia['Coordinates'].apply(Point)
-coleopteros_colombia = gpd.GeoDataFrame(coleopteros_colombia, geometry='Coordinates')
-coleopteros_colombia.crs = {'init' :'epsg:4326'}
-
+### Realizar los cruces con las distintas capas
 
 #Realizar cruces Geo radiacion
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Radiacion_solar_global_promedio_multianual, how="left", op="intersects")
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Radiacion_solar_global_promedio_multianual, how="left", op="intersects")
 
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'OBJECTID', 'ID', 'GRIDCODE', 'Shape_Leng', 'Shape_Area','RULEID'])
-coleopteros_colombia.rename(columns={'RANGO': 'Radiacion_solar_global_promedio_multianual'}, inplace=True)
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'OBJECTID', 'ID', 'GRIDCODE', 'Shape_Leng', 'Shape_Area','RULEID'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Radiacion_solar_global_promedio_multianual'}, inplace=True)
 
 #Realizar cruces Geo Humedad relativa
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Humedad_Relativa_Anual_Promedio_Multianual_1981_2010, how="left", op="intersects")
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Humedad_Relativa_Anual_Promedio_Multianual_1981_2010, how="left", op="intersects")
 
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'OBJECTID', 'GRIDCODE', 'Shape_Leng', 'Shape_Area','RULEID'])
-coleopteros_colombia.rename(columns={'RANGO': 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010'}, inplace=True)
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'OBJECTID', 'GRIDCODE', 'Shape_Leng', 'Shape_Area','RULEID'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010'}, inplace=True)
 
 
 #Realizar cruces Geo Temperatura maxima
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010, how="left", op="intersects")
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010, how="left", op="intersects")
 
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'PeriodoIni', 'PeriodoFin'])
-coleopteros_colombia.rename(columns={'RANGO': 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010'}, inplace=True)
-
-#Realizar cruces Geo Temperatura media
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Temperatura_Media_Mensual_Promedio_Multianual_1981_2010, how="left", op="intersects")
-
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'GRIDCODE_right','PeriodoIni', 'PeriodoFin'])
-coleopteros_colombia.rename(columns={'RANGO': 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010'}, inplace=True)
-
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'PeriodoIni', 'PeriodoFin'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010'}, inplace=True)
 
 #Realizar cruces Geo Temperatura media
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010, how="left", op="intersects")
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Temperatura_Media_Mensual_Promedio_Multianual_1981_2010, how="left", op="intersects")
 
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'GRIDCODE','PeriodoIni', 'PeriodoFin'])
-coleopteros_colombia.rename(columns={'RANGO': 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010'}, inplace=True)
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'GRIDCODE_right','PeriodoIni', 'PeriodoFin'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010'}, inplace=True)
 
 
 #Realizar cruces Geo Temperatura media
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Velocidad_viento_10_mtrs_altura_Mensual_2000_2010, how="left", op="intersects")
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010, how="left", op="intersects")
 
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'GRIDCODE','PeriodoIni', 'PeriodoFin'])
-coleopteros_colombia.rename(columns={'RANGO': 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010'}, inplace=True)
-
-
-#Realizar cruces VelocidadViento
-coleopteros_colombia = gpd.sjoin(coleopteros_colombia, Velocidad_viento_10_mtrs_altura_Mensual_2000_2010, how="left", op="intersects")
-
-coleopteros_colombia = coleopteros_colombia.drop(columns=['index_right', 'GRIDCODE','PeriodoIni', 'PeriodoFin'])
-coleopteros_colombia.rename(columns={'RANGO': 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010'}, inplace=True)
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'GRIDCODE','PeriodoIni', 'PeriodoFin'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010'}, inplace=True)
 
 
+#Realizar cruces Geo Temperatura media
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Velocidad_viento_10_mtrs_altura_Mensual_2000_2010, how="left", op="intersects")
+
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'GRIDCODE','PeriodoIni', 'PeriodoFin'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010'}, inplace=True)
 
 
-coleopteros_colombia['elevation'] = rasterstats.point_query(coleopteros_colombia.geometry, astergdem2, interpolate='nearest')
+#Realizar cruces Velocidad viento
+coleoptera_completa_mundo_especie_colombia = gpd.sjoin(coleoptera_completa_mundo_especie_colombia, Velocidad_viento_10_mtrs_altura_Mensual_2000_2010, how="left", op="intersects")
+
+coleoptera_completa_mundo_especie_colombia = coleoptera_completa_mundo_especie_colombia.drop(columns=['index_right', 'GRIDCODE','GRIDCODE_left','PeriodoIni', 'PeriodoFin'])
+coleoptera_completa_mundo_especie_colombia.rename(columns={'RANGO': 'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010'}, inplace=True)
 
 
-coleopteros_colombia['elevation'] = rasterstats.point_query(coleopteros_colombia.geometry, Escenario_Precipitacion_1976_2005, interpolate='nearest')
+#Realizar cruces DEM elevación
+ruta_dem = r"/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/TercerSemestre/TesisFinal/Datos/astergdem2.tif"
+with rasterio.open(ruta_dem) as src:
+    coords = [(x, y) for x, y in zip(coleoptera_completa_mundo_especie_colombia.geometry.x, coleoptera_completa_mundo_especie_colombia.geometry.y)]
+    valores = [v[0] for v in src.sample(coords, indexes=1)]
 
+coleoptera_completa_mundo_especie_colombia["elevacion_dem"] = valores
 
-# Convert the DataFrame to a GeoDataFrame
-# Create a GeoDataFrame from the DataFrame's lat/lon coordinates
-geometry = [Point(lon, lat) for lon, lat in zip(coleopteros_colombia['decimalLongitude'], coleopteros_colombia['decimalLatitude'])]
-gdf = gpd.GeoDataFrame(coleopteros_colombia, geometry=geometry)
-gdf.set_crs('EPSG:4326', allow_override=True, inplace=True)
-raster_file = '/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/astergdem2.tif'
-results = rasterstats.point_query(gdf, raster_file)
-coleopteros_colombia['elevacion'] = results
+#Realizar cruces raster de Precipitación
+ruta_precipitacion = r"/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/TercerSemestre/TesisFinal/Datos/Escenario_Precipitacion_1976_2005/ECC_Prcp_GeoTiff_2011_2040/ECC_Prcp_1976_2005_100K_2015.tif"
+with rasterio.open(ruta_precipitacion) as src:
+    coords = [(x, y) for x, y in zip(coleoptera_completa_mundo_especie_colombia.geometry.x, coleoptera_completa_mundo_especie_colombia.geometry.y)]
+    valores = [v[0] for v in src.sample(coords, indexes=1)]
 
-raster_file = '/Users/estebanmarentes/Desktop/EstebanMH/GBIFColombiaCompleto20200825/MaestriaUJaveriana/SegundoSemestre/TrabajoGradoII/Datos/Escenario_Precipitacion_1976_2005/ECC_Prcp_GeoTiff_2011_2040/ECC_Prcp_1976_2005_100K_2015.tif' 
-results = rasterstats.point_query(gdf, raster_file)
-coleopteros_colombia['Escenario_Precipitacion_1976_2005'] = results
-
-
-coleopteros_colombia.to_csv( "ColeopteroCompletaExtra"+'.txt', sep="\t", encoding = "utf8")
-coleopteros_colombia = pd.read_csv('ColeopteroCompletaExtraRaster.csv', encoding = "utf8", sep=",")
-coleopteros_colombia.rename(columns={'SAMPLE_1': 'elevacion'}, inplace=True)
-coleopteros_colombia.rename(columns={'SAMPLE_1_2': 'Escenario_Precipitacion_1976_2005'}, inplace=True)
+coleoptera_completa_mundo_especie_colombia["ECC_Prcp_1976_2005_100K_2015"] = valores
 
 
 
-#### Exportar los datos completos luego de haber agregado las columnas
+# Etiquetar con los datos con la información de las familias
 
-coleopteros_colombia.to_csv( "ColeopteroCompletaColombia"+'.txt', sep="\t", encoding = "utf8")
-
-#coleopteros_colombia = pd.read_csv('ColeopteroCompletaColombia.txt', encoding = "utf8", sep="\t")
-coleopteros_colombia = pd.read_csv('ColeopteroCompletaExtraRaster.txt', encoding = "utf8", sep="\t")
+etiquetas_Coleoptera_Colombia = etiquetas_Coleoptera_Colombia[['family','NumeroEspeciesFamilia']] #Quedarse solo con la columna del número de registros
+coleoptera_completa_mundo_especie_colombia = pd.merge(coleoptera_completa_mundo_especie_colombia,etiquetas_Coleoptera_Colombia,how='left',on='family')
 
 
-# descartar los datos no etiquetados
-coleopteros_colombia = coleopteros_colombia.dropna(subset=['NumeroEspeciesFamilia'])
-coleopteros_colombia.dropna(axis=1, how='all', inplace=True)
+# Exportar los datos ya ajustados
+coleoptera_completa_mundo_especie_colombia.to_csv( 'coleoptera_completa_mundo_especie_colombia'+'.txt', sep="\t", encoding = "utf8")
+
+# Cargar solamente los datos ajustados
+# etiquetas_Coleoptera_Colombia = pd.read_csv('coleoptera_completa_mundo_especie_colombia.txt', encoding = "utf8", sep="\t")
+
+
+''' Dejar solamente los datos de especie en caso de que sea necesario
+coleoptera_completa_mundo['taxonRank']=coleoptera_completa_mundo['taxonRank'].str.title()
+coleoptera_completa_mundo['taxonRank']=coleoptera_completa_mundo['taxonRank'].replace('Specie', 'Especie').replace('Espécie', 'Especie').replace('Epecie', 'Especie').replace('Especies', 'Especie').replace('Species', 'Especie').replace('SUBSPECIES', 'Especie').replace('VARIETY', 'Especie')
+coleoptera_completa_mundo_especie=coleoptera_completa_mundo.loc[coleoptera_completa_mundo['taxonRank'] == 'Especie' ]
+coleoptera_completa_mundo_especie.dropna(axis=1, how='all', inplace=True)
+
+'''
+
+### hacer un plot del mapa de Colombia par ver los datos
+
+# corret todo el bloque junto
+fig, ax = plt.subplots(figsize=(10, 10))
+departamento.plot(ax=ax, color='lightblue', edgecolor='black', label="Departamento")
+coleoptera_completa_mundo_especie_colombia.plot(ax=ax, color='red', marker='o', markersize=5, label="Registros de especies de Coleoptera")
+ax.set_title("Mapa de Colombia con registros de Coleoptera")
+ax.set_xlabel("Longitud")
+ax.set_ylabel("Latitud")
+ax.legend()
+plt.savefig('mapaColeoptera.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+
+### generar descriptivos del conjunto de datos
+
+#∫HASTA AQUI FUNCIONA BIEN SOLO
+
+
+
+## Etapa 2: Análisis exploratorio de los datos.
+
+# Información general sobre el dataset
+print("Información del Dataset:")
+print(coleopteros_colombia_etiquetados.info())
+
+
+print(coleopteros_colombiaNumEspecie.info())
+
+
+# Resumen estadístico de las características numéricas
+print("\nResumen Estadístico de las Características Numéricas:")
+print(coleoptera_completa_mundo_especie.describe())
+
+# Resumen de las características categóricas
+print("\nResumen de las Características Categóricas:")
+print(coleopteros_colombia.describe(include=['object']))
 
 
 
 
- 
-coleopteros_colombiaNumEspecie = coleopteros_colombia.dropna(subset=['NumeroEspeciesFamilia'])
-coleopteros_colombiaNumEspecie.dropna(axis=1, how='all', inplace=True)
 
-list(coleopteros_colombiaNumEspecie)
 
-coleopteros_colombiaNumEspecie = coleopteros_colombiaNumEspecie[['type',  'basisOfRecord',  'recordedBy',  'individualCount',  'organismQuantity',  'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'minimumElevationInMeters',  'maximumElevationInMeters',  'minimumDepthInMeters',  'maximumDepthInMeters',  'decimalLatitude',  'decimalLongitude',  'geodeticDatum',  'coordinateUncertaintyInMeters', 'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',  'NumeroEspeciesFamilia',  'ECC_Prcp_1976_2005_100K_2015',  'elevaciontiff',  'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual',  'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']]
+
+# Seleccionar solamente las categóricas
+categorical_columns = coleopteros_colombia_etiquetados.select_dtypes(include=['object']).columns
+
+# Quitar nan usando la moda para las variales categóricas
+
+for col in categorical_columns:
+    mode_value = coleopteros_colombia_etiquetados[col].mode()
+    if not mode_value.empty:  
+        coleopteros_colombia_etiquetados[col] = coleopteros_colombia_etiquetados[col].fillna(mode_value[0])
+    else:
+        coleopteros_colombia_etiquetados[col] = coleopteros_colombia_etiquetados[col].fillna('Unknown')
+
+# Seleccionar solamente las numéricas
+numerical_columns = coleopteros_colombia_etiquetados.select_dtypes(include=['float64']).columns
+
+
+
+
+
+
+
+
+coleopteros_colombiaNumEspecie = coleopteros_colombia[['type',  'basisOfRecord',  'recordedBy',  'individualCount',  'organismQuantity',  'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'minimumElevationInMeters',  'maximumElevationInMeters',  'minimumDepthInMeters',  'maximumDepthInMeters',  'decimalLatitude',  'decimalLongitude',  'geodeticDatum',  'coordinateUncertaintyInMeters', 'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',  'NumeroEspeciesFamilia',  'ECC_Prcp_1976_2005_100K_2015',  'elevaciontiff',  'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual',  'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']]
 
 
 categorical_features = ['type',  'basisOfRecord',  'recordedBy',   'organismQuantityType',  'sex',  'lifeStage',  'reproductiveCondition',  'behavior',  'establishmentMeans',  'occurrenceStatus',  'associatedTaxa',  'occurrenceRemarks',  'previousIdentifications',  'organismRemarks',  'eventID',  'fieldNumber',  'eventDate',  'eventTime',  'habitat',  'samplingProtocol',  'fieldNotes',  'eventRemarks',  'waterBody',  'island',  'country',  'stateProvince',  'county',  'municipality',  'locality',  'verbatimLocality',  'geodeticDatum',  'verbatimIdentification',  'identificationQualifier',  'typeStatus',  'identifiedBy',  'identificationRemarks',  'scientificName',  'kingdom',  'phylum',  'class',  'order',  'superfamily',  'family',  'subfamily',  'tribe',  'genus',  'genericName',  'subgenus',  'specificEpithet',  'infraspecificEpithet',  'taxonRank',  'verbatimTaxonRank',  'scientificNameAuthorship',  'vernacularName',   'Humedad_Relativa_Anual_Promedio_Multianual_1981_2010',  'Radiacion_solar_global_promedio_multianual', 'Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']
@@ -212,23 +277,10 @@ cols = ['minimumElevationInMeters','maximumElevationInMeters','minimumDepthInMet
 coleopteros_colombiaNumEspecie[cols] = coleopteros_colombiaNumEspecie[cols].apply(pd.to_numeric, errors='coerce', axis=1)
 
 
-
-categorical_features = ['Temperatura_Maxima_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Media_Mensual_Promedio_Multianual_1981_2010',  'Temperatura_Minima_Media_Mensual_Promedio_Multianual_1981_2010',  'Velocidad_viento_10_mtrs_altura_Mensual_2000_2010']
-
  
 
 coleopteros_colombiaNumEspecie[['Radiacion_solar_global_promedio_multianual']]=coleopteros_colombiaNumEspecie[['Radiacion_solar_global_promedio_multianual']].replace('kWh/m²', '', regex=True)
 
-
-# Crear un transformador para codificar las características categóricas
-
-
-le = LabelEncoder()
-
-for column in categorical_features:
-    coleopteros_colombia[column] = le.fit_transform(coleopteros_colombia[column])
-
-print(coleopteros_colombia.info())
 
 
 
@@ -240,27 +292,6 @@ coleopteros_colombiaNumEspecie[cols] = coleopteros_colombiaNumEspecie[cols].asty
 
 
 coleopteros_colombiaNumEspecie['Radiacion_solar_global_promedio_multianual'] = le.fit_transform(coleopteros_colombiaNumEspecie['Radiacion_solar_global_promedio_multianual'])
-
-
-
-
-## Etapa 2: Análisis exploratorio de los datos.
-
-# Información general sobre el dataset
-print("Información del Dataset:")
-print(coleopteros_colombia.info())
-
-
-print(coleopteros_colombiaNumEspecie.info())
-
-
-# Resumen estadístico de las características numéricas
-print("\nResumen Estadístico de las Características Numéricas:")
-print(coleopteros_colombia.describe())
-
-# Resumen de las características categóricas
-print("\nResumen de las Características Categóricas:")
-print(coleopteros_colombia.describe(include=['object']))
 
 
 
@@ -278,25 +309,43 @@ resultadosTipoPublicador[['type', 'basisOfRecord', 'recordedBy', 'organismQuanti
 
 
 
+
+# Quitar nan usando  para las variables numéricas
+
+df_interpolated = coleopteros_colombia.interpolate(method='linear', axis=0)
+gdf_interpolated = coleopteros_colombia.interpolate()
+
+
+
+### Crear un transformador para codificar las características categóricas
+
+
+le = LabelEncoder()
+
+for column in categorical_columns:
+    coleopteros_colombia_etiquetados[column] = le.fit_transform(coleopteros_colombia_etiquetados[column])
+
+print(ColDP_coleopteros.info())
+
+
+
+#### Se exportan los datos completos luego de todo el procesamiento
 coleopteros_colombiaNumEspecie.to_csv( "coleopteros_colombiaNumEspecie"+'.txt', sep="\t", encoding = "utf8")
 
-#coleopteros_colombiaNumEspecie = pd.read_csv('coleopteros_colombiaNumEspecie.txt', encoding = "utf8", sep="\t")
 
+####  Se divide en los conjuntos de entrenamiento y prueba.
 
-#  Se divide en los conjuntos de entrenamiento y prueba.
-
- 
-y = coleopteros_colombia['NumeroEspeciesFamilia'].values 
-
+# Dejar solamente los datos etiquetados en Y
+y = coleoptera_completa_mundo_especie_colombia['NumeroEspeciesFamilia'].values 
 arg = tf.convert_to_tensor(y, dtype=tf.float32)
-
-
 y = y.astype(np.float32) 
 
-X = coleopteros_colombia.loc[:, coleopteros_colombia.columns != "NumeroEspeciesFamilia"] 
+# Dejar en X todos los datos menos la columna con las etiquetas
+X = coleoptera_completa_mundo_especie_colombia.loc[:, coleoptera_completa_mundo_especie_colombia.columns != "NumeroEspeciesFamilia"] 
 
- 
+# Separar los datos en entrenamiento y prueba
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=42)
+
 
 
 
@@ -434,3 +483,94 @@ plantae_colombia = plantae_colombia[[ 'gbifID','decimalLatitude', 'decimalLongit
 plantae_colombia.to_csv( 'plantas_coordenadas'+'.txt', sep="\t", encoding = "utf8")
 
 coleopteros_colombia_exportar.to_csv( 'coleoptera_coordenadas'+'.txt', sep="\t", encoding = "utf8")
+
+
+
+
+# predecir los datos para Antioquia
+
+
+coleopteros_colombia_etiquetados_antioquia=coleopteros_colombia_etiquetados.loc[coleopteros_colombia['stateProvince'] == 'Antioquia' ]
+Mal
+predictions = model.predict(X_new)
+
+# pivot table para la suma de especies únicas por familia en Antioquia
+
+
+
+
+
+
+# Structured data input
+input_structured = Input(shape=(num_features,))  # e.g., climate data, location info
+
+# CNN for satellite images input (optional)
+input_image = Input(shape=(image_height, image_width, channels))  # e.g., satellite images
+
+x1 = Dense(64, activation='relu')(input_structured)
+x1 = Dropout(0.2)(x1)
+
+# CNN layers for image input (optional)
+x2 = Conv2D(32, (3, 3), activation='relu')(input_image)
+x2 = Flatten()(x2)
+
+# Concatenate structured data and CNN output
+x = Concatenate()([x1, x2])
+
+# Further dense layers
+x = Dense(128, activation='relu')(x)
+x = Dropout(0.3)(x)
+x = Dense(64, activation='relu')(x)
+
+# Output layer (regression task)
+output = Dense(1)(x)  # Single output (species number)
+
+# Create model
+model = Model(inputs=[input_structured, input_image], outputs=output)
+
+# Compile model
+model.compile(optimizer=Adam(), loss='mean_squared_error')
+
+# Summary of the model architecture
+model.summary()
+
+
+
+
+
+
+
+coleoptera_completa_mundo_especie_colombia['scientificName'].count()
+
+
+print(coleoptera_completa_mundo_especie.columns)
+
+
+
+
+
+
+unique_values_A = coleoptera_completa_mundo_especie_colombia['scientificName'].unique()
+unique_values_A.count()
+
+
+
+# generar descriptivos del conjunto de datos
+
+# separar entrenar y entrenar
+
+
+
+
+'''
+En el documento vamos a utilizar la metodologia CRISP-DM
+contexto de los datos
+exploracion de los datos
+de una vez colocar la descarga, el fultrado y con ese subconjunto de datos que estan en Antioquia
+antes de entrenar toca sacar de alguna manera que queremos hacer con la red, neuronal. Intentar buscarar las variables
+quedarnos por ahi con 
+
+dejar un solo punto en geopandas con formato point
+luego lo que podemos es estimar o tener todos los datos de colombia excepto el shape de colombia y luego con todo Colombia 
+
+'''

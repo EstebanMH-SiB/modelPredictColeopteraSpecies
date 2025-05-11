@@ -1,4 +1,4 @@
-name: tf2
+name: modelPredictColeopteraSpecies
 channels:
   - defaults
 dependencies:
@@ -355,4 +355,4 @@ dependencies:
     - seaborn==0.13.2
     - snuggs==1.4.7
     - xgboost==2.1.4
-prefix: /Users/estebanmarentes/opt/anaconda3/envs/tf2
+prefix: /Users/estebanmarentes/opt/anaconda3/envs/modelPredictColeopteraSpecies

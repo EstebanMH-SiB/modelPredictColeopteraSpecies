@@ -5,8 +5,6 @@
 
 Autor: Esteban Marentes Herrera
 Enlace GitHub https://github.com/EstebanMH-SiB/modelPredictColeopteraSpecies
-
-
 """
 
 # Importa las librerías necesarias
@@ -23,7 +21,7 @@ from shapely.geometry import Point
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder, MinMaxScaler
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV, KFold
+from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV, KFold, GridSearchCV
 from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score, mean_absolute_error, classification_report, ndcg_score, mean_squared_error, r2_score, precision_score, recall_score, f1_score, confusion_matrix
 from sklearn.ensemble import RandomForestRegressor
@@ -33,14 +31,13 @@ from sklearn.tree import plot_tree
 from xgboost import XGBRegressor
 from tensorflow.keras import layers, models
 from tensorflow.keras.models import Sequential, model_from_json
-from tensorflow.keras.layers import Dense, Dropout, Normalization, Rescaling
+from tensorflow.keras.layers import Dense, Dropout, Input, Normalization, Rescaling
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras import backend as K
 from keras.utils import plot_model
 from keras.optimizers import Adam
 import seaborn as sns
 from scipy.stats import chi2_contingency
-from sklearn.model_selection import GridSearchCV
 from docx import Document
 from io import StringIO
 from joblib import dump, load
@@ -244,6 +241,7 @@ label_encoders = {}
 
 for column in categorical_columns:
     le = LabelEncoder()  # Crear un LabelEncoder para cada columnas
+    coleoptera_completa_mundo_especie_colombia[column] = coleoptera_completa_mundo_especie_colombia[column].astype(str) # convertir los valores faltantes a string
     coleoptera_completa_mundo_especie_colombia[column] = le.fit_transform(coleoptera_completa_mundo_especie_colombia[column])
     label_encoders[column] = le # Guardar los diccionarios para poder hacer la trasnformación inversa luego
     
@@ -463,10 +461,10 @@ dump(model_linear, 'modelo_lineal_entrenado.pkl')
 # model_linear = load('modelo_lineal_entrenado.pkl') # usar para cargar el modelo
 
 
-#### Modelo número 1, red neuronal profunda sencilla
+#### Modelo número 1, perceptrón multicapa
 model = Sequential()
-model.add(Dense(64, input_dim=48, activation='relu'))
-model.add(Dense(32, activation='relu')) 
+model.add(Input(shape=(48,)))  
+model.add(Dense(64, activation='relu'))
 model.add(Dense(1))
 
 
@@ -489,6 +487,7 @@ print("Mean Squared Error:", mse)
 model.save('dnn_simple.keras')
 dnn_simple = tf.keras.models.load_model('dnn_simple.keras')
 
+plot_model(model, to_file='dnn_simple.png', show_shapes=True, show_layer_names=True)
 
 #### Modelo número 2, red neuronal profunda sin datos estandarizados optimizando los hiperparámetros
 np.random.seed(42)
@@ -544,12 +543,14 @@ print(f"Test Loss: {test_loss}")
 print(f"Test MAE: {test_mae}")
 
 
-
 # Exportar el modelo DNN sin escalar
 best_model.save('best_model_sinescalar.keras')
 best_model_dnn = tf.keras.models.load_model('best_model_sinescalar.keras')
 # Mostrar la arquitectura del mejor modelo
 best_model_dnn.summary()
+
+plot_model(best_model_dnn, to_file='best_model_dnn.png', show_shapes=True, show_layer_names=True)
+
 
 # Evaluar el modelo
 y_pred = best_model_dnn.predict(X_test)
@@ -704,17 +705,17 @@ rs_param_grid = {
 }
 
 # Crear el RandomForestRegressor
-rf = RandomForestRegressor(random_state=123)
+rf = RandomForestRegressor(random_state=42)
 
 # Inicialiar la búsqueda por grilla RandomizedSearchCV() con el rf y la grilla
 rf_rs = RandomizedSearchCV(
     estimator=rf,
     param_distributions=rs_param_grid,
-    cv=3,  # Number of folds
+    cv=10,  # Number of folds
     n_iter=10,  # Number of parameter candidate settings to sample
     verbose=2,  # The higher this is, the more messages are outputed
     scoring="neg_mean_absolute_error",  # Metric to evaluate performance
-    random_state=123
+    random_state=42
 )
 
 # Train the model on the training set
@@ -765,7 +766,7 @@ plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'k--')
 plt.show()
 
 
-###### Validación 10 fold del mejor modelo DNN escalado #####
+###### Validación cruzada k-fold del mejor modelo DNN escalado #####
 
 
 # Convertir X, y a arrays de numpy si no lo son
@@ -842,7 +843,7 @@ plt.tight_layout()
 plt.show()
 
 
-##### Predicción número de especies para Coleoptera de Colombia con el mejor modelo #####
+##### Predicción número de especies para Coleoptera de Colombia con el mejor modelo por departamento y familia #####
 
 '''
 Cambiar el modelo según el que tenga el mejor resultado entre:
@@ -856,6 +857,13 @@ best_model_rf
 
 model = best_model_dnn_escalado
  
+# Quitar la columna NumeroEspeciesFamilia del conjunto a predecir
+coleoptera_completa_colombia = coleoptera_completa_colombia.loc[:, coleoptera_completa_colombia.columns != "NumeroEspeciesFamilia"] 
+# Escalar los datos en caso que use el modelo escalado
+scaler = StandardScaler()
+scaled_array = scaler.fit_transform(coleoptera_completa_colombia)
+
+
 prediccion_especies = model.predict(coleoptera_completa_colombia)
 
 # Unir las predicciones a la tabla
@@ -863,17 +871,18 @@ estimacion_colombia = pd.DataFrame(coleoptera_completa_colombia)
 estimacion_colombia['prediccion_especies'] = prediccion_especies 
 
 for column, encoder in label_encoders.items():
-    estimacion_colombia[column] = encoder.inverse_transform(estimacion_colombia[column])
+    if column in estimacion_colombia.columns:
+        estimacion_colombia[column] = encoder.inverse_transform(estimacion_colombia[column])
 
 
 # pivot table para la suma de especies únicas por familia en Colombia
-tabla_resumen_estimaciones = pd.pivot_table(estimacion_colombia, values='prediccion_especies', index=['departamento','family'], aggfunc='median')
+tabla_resumen_estimaciones = pd.pivot_table(estimacion_colombia, values='prediccion_especies', index=['departamento','family'], aggfunc=['mean', 'median', 'max', 'min'])
 
 # Redondear los datos al entero más cercan
 pivot_table_rounded = np.ceil(tabla_resumen_estimaciones).astype(int)
 
 # Exportar la tabla dinamica
-pivot_table_rounded.to_excel('pivot_table_predictions_randomforest.xlsx')
+pivot_table_rounded.to_excel('pivot_table_predictions_colombia_deparmentos.xlsx')
 
 ###############################################################################
 
@@ -882,12 +891,12 @@ prediccion_especies_antioquia = model.predict(coleoptera_completa_colombia)
 
 
 for column, encoder in label_encoders.items():
-    coleoptera_completa_mundo_especie_colombia[column] = encoder.inverse_transform(coleoptera_completa_mundo_especie_colombia[column])
+    if column in estimacion_colombia.columns:
+        estimacion_colombia[column] = encoder.inverse_transform(estimacion_colombia[column])
 
-coleopteros_colombia_etiquetados_antioquia=coleoptera_completa_mundo_especie_colombia.loc[coleoptera_completa_mundo_especie_colombia['departamento'] == 'Antioquia' ]
 
 # Unir las predicciones a la tabla
-estimacion_colombia = pd.DataFrame(coleopteros_colombia_etiquetados_antioquia)  # Convert X_test to DataFrame if it's not already
+estimacion_colombia = pd.DataFrame(coleoptera_completa_colombia)  # Convert X_test to DataFrame if it's not already
 estimacion_colombia['prediccion_especies_antioquia'] = prediccion_especies_antioquia  # Add the predicted values as a new column
 
 
@@ -905,10 +914,11 @@ pivot_table_rounded.to_excel('tabla_resumen_estimaciones_colombia.xlsx')
 ##### Predicción número de especies para Coleoptera de Antioquia con el mejor modelo
 
 # Cargar solamente los datos ajustados
-coleoptera_completa_colombia_sinna = pd.read_csv('coleoptera_completa_sinna.txt', encoding = "utf8", sep="\t")
-coleopteros_colombia_etiquetados_antioquia=coleoptera_completa_colombia_sinna.loc[coleoptera_completa_colombia_sinna['departamento'] == 'Antioquia' ]
+# coleoptera_completa_colombia_sinna = pd.read_csv('coleoptera_completa_sinna.txt', encoding = "utf8", sep="\t")
+# coleopteros_colombia_etiquetados_antioquia = coleopteros_colombia_etiquetados_antioquia.drop(columns=['Coordinates','gbifID','occurrenceID','kingdom','phylum','class', 'order', 'stateProvince','infraspecificEpithet','license'])
 
-coleopteros_colombia_etiquetados_antioquia = coleopteros_colombia_etiquetados_antioquia.drop(columns=['Coordinates','gbifID','occurrenceID','kingdom','phylum','class', 'order', 'stateProvince','infraspecificEpithet','license'])
+coleopteros_colombia_etiquetados_antioquia=coleoptera_completa_colombia.loc[coleoptera_completa_colombia['departamento'] == 'Antioquia' ]
+
 
 
 categorical_columns = coleopteros_colombia_etiquetados_antioquia.select_dtypes(include=['object']).columns
@@ -919,10 +929,6 @@ for column in categorical_columns:
     coleopteros_colombia_etiquetados_antioquia[column] = le.fit_transform(coleopteros_colombia_etiquetados_antioquia[column])
     label_encoders[column] = le # Guardar los diccionarios para poder hacer la trasnformación inversa luego
 
-
-# Scale the data
-scaler = StandardScaler()
-scaled_array = scaler.fit_transform(coleopteros_colombia_etiquetados_antioquia)
 
 # Reconstruct the DataFrame with original column names and index
 coleopteros_colombia_etiquetados_antioquia = pd.DataFrame(
@@ -957,6 +963,13 @@ pivot_table_rounded.to_excel('pivot_table_predicciones_Antioquia.xlsx')
 
 
 ##### Grafica para mostrar el número de especies por familia en Antioquia
+'''
+Antes de correr esta parte, es necesario limpiar el resultado del paso anterior
+para eliminar las subfamilias incorrectas y luego guardar un archivo .txt
+con la información que se desea graficar, en general son dos columnas
+la primera para las familias y la segunda con los valores predichos
+'''
+
 datos_prediccion_familia_antioquia = pd.read_csv('datosAntioquia.txt', encoding = "utf8", sep="\t")
 # Ordenar datos para visualización
 datos_ordenados = datos_prediccion_familia_antioquia.sort_values(by='Promedio de especies estimado Antioquia', ascending=True)

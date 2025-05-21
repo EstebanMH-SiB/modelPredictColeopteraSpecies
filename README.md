@@ -1,4 +1,4 @@
-<img width="376" alt="dnn_escalado_mae" src="https://github.com/user-attachments/assets/adbf01e7-4b8b-47f5-ad65-a7bcab8010d1" /># Modelo de predicción para el número de especies de Coleoptera en el Departamento de Antioquia
+# Modelo de predicción para el número de especies de Coleoptera en el Departamento de Antioquia
 
 Este repositorio contiene el script utilizado en el Proyecto Aplicado para optar al título de Magister en Ciencia de Datos de Esteban Marentes.
 

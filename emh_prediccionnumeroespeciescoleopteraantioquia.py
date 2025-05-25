@@ -2,7 +2,6 @@
 """EMH_Predicción_número_especies_coleoptera_antioquia.py
 # Modelo de predicción para el número de especies de Coleoptera en Colombia y en el Departamento de Antioquia
 
-
 Autor: Esteban Marentes Herrera
 Enlace GitHub https://github.com/EstebanMH-SiB/modelPredictColeopteraSpecies
 """
@@ -14,25 +13,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import tensorflow as tf
-import keras
 import keras_tuner as kt
 import rasterio
 from shapely.geometry import Point
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder, MinMaxScaler
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV, KFold, GridSearchCV
-from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, mean_absolute_error, classification_report, ndcg_score, mean_squared_error, r2_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.preprocessing import StandardScaler,LabelEncoder
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, KFold
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.neural_network import MLPRegressor
-from sklearn.svm import SVR
 from sklearn.tree import plot_tree
-from xgboost import XGBRegressor
-from tensorflow.keras import layers, models
-from tensorflow.keras.models import Sequential, model_from_json
-from tensorflow.keras.layers import Dense, Dropout, Input, Normalization, Rescaling
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Input
 from tensorflow.keras import backend as K
 from keras.utils import plot_model
 from keras.optimizers import Adam
@@ -223,8 +215,9 @@ for column in coleoptera_completa_mundo_especie_colombia.columns:
         coleoptera_completa_mundo_especie_colombia[column] = categorical_imputer.fit_transform(coleoptera_completa_mundo_especie_colombia[[column]]).flatten()
 
 # Exportar los datos sin NA
-coleoptera_completa_colombia = coleoptera_completa_mundo_especie_colombia
-coleoptera_completa_colombia.to_csv( 'coleoptera_completa_sinna'+'.txt', sep="\t", encoding = "utf8", index=False)
+coleoptera_completa_colombia_sinna = coleoptera_completa_mundo_especie_colombia
+coleoptera_completa_colombia_sinna.to_csv( 'coleoptera_completa_sinna'+'.txt', sep="\t", encoding = "utf8", index=False)
+
 
 # Etiquetar con los datos con la información de las familias
 etiquetas_Coleoptera_Colombia = etiquetas_Coleoptera_Colombia[['family','NumeroEspeciesFamilia']] #Quedarse solo con la columna del número de registros
@@ -259,12 +252,12 @@ coleoptera_completa_mundo_especie_colombia.dropna(axis=1, how='all', inplace=Tru
 coleoptera_completa_mundo_especie_colombia.to_csv( 'coleoptera_completa_mundo_especie_colombia_etiquetados'+'.txt', sep="\t", encoding = "utf8")
 
 
-####################################################################################################################
+###### Análisis de datos
 
 
 ### hacer un plot del mapa de Colombia par ver los datos
 departamento =gpd.read_file("departamento/MGN_DPTO_POLITICO.shp", encoding = "utf8") # cargar el archivo shapefile de los municipios de Colombia
-# corret todo el bloque junto
+# correr todo el bloque junto
 fig, ax = plt.subplots(figsize=(10, 10))
 departamento.plot(ax=ax, color='lightblue', edgecolor='black', label="Departamento")
 coleoptera_completa_mundo_especie_colombia.plot(ax=ax, color='red', marker='o', markersize=5, label="Registros de especies de Coleoptera")
@@ -274,11 +267,11 @@ ax.set_ylabel("Latitud")
 ax.legend()
 plt.savefig('mapaColeoptera.png', dpi=300, bbox_inches='tight')
 plt.show()
-
+# correr todo el bloque junto
 
 ## Vista final de los datos y exportar una muestra
-nan_count = coleoptera_completa_mundo_especie_colombia.isna().sum(axis=1)
-vista_final = coleoptera_completa_mundo_especie_colombia[nan_count <= 4]
+nan_count = coleoptera_completa_colombia_sinna.isna().sum(axis=1)
+vista_final = coleoptera_completa_colombia_sinna[nan_count <= 4]
 vista_final = vista_final.head(10)
 vista_final = vista_final.transpose()
 vista_final.to_excel("dataframe.xlsx", index=True)
@@ -290,15 +283,15 @@ vista_final.to_excel("dataframe.xlsx", index=True)
 
 # Información general sobre el dataset
 print("Información del Dataset:")
-print(coleoptera_completa_mundo_especie_colombia.info())
+print(coleoptera_completa_colombia_sinna.info())
 
 # Resumen estadístico de las características numéricas
 print("\nResumen Estadístico de las Características Numéricas:")
-print(coleoptera_completa_mundo_especie_colombia.describe())
+print(coleoptera_completa_colombia_sinna.describe())
 
 # Resumen de las características categóricas
 print("\nResumen de las Características Categóricas:")
-print(coleoptera_completa_mundo_especie_colombia.describe(include=['object']))
+print(coleoptera_completa_colombia_sinna.describe(include=['object']))
 
 
 def describe_dataframe_with_categorical_to_word(df, filename='descripcion_df.docx'):
@@ -352,13 +345,13 @@ def describe_dataframe_with_categorical_to_word(df, filename='descripcion_df.doc
     print(f"Descripción guardada a {filename}")
 
 # Exportar los datos a un word
-describe_dataframe_with_categorical_to_word(coleoptera_completa_mundo_especie_colombia)
+describe_dataframe_with_categorical_to_word(coleoptera_completa_colombia_sinna)
 
 
 # Seleccionar solamente las variables categóricas
-categorical_columns = coleoptera_completa_mundo_especie_colombia.select_dtypes(include=['object']).columns
+categorical_columns = coleoptera_completa_colombia_sinna.select_dtypes(include=['object']).columns
 # Seleccionar solamente variables las numéricas
-numerical_columns = coleoptera_completa_mundo_especie_colombia.select_dtypes(include=['float64']).columns
+numerical_columns = coleoptera_completa_colombia_sinna.select_dtypes(include=['float64']).columns
 
 
 # Crea gráficos de distribución para cada variable numérica
@@ -366,7 +359,7 @@ plt.figure(figsize=(18, 6))  # Ajustar el tamaño de la figura para múltiples s
 
 for i, feature in enumerate(numerical_columns, 1):
     plt.subplot(1, len(numerical_columns), i)
-    sns.histplot(coleoptera_completa_mundo_especie_colombia[feature], kde=True, bins=30)  # kde=True añade la curva de densidad
+    sns.histplot(coleoptera_completa_colombia_sinna[feature], kde=True, bins=30)  # kde=True añade la curva de densidad
     plt.title(f'Distribución de {feature}')
     plt.xlabel(feature)
     plt.ylabel('Frecuencia')
@@ -393,7 +386,7 @@ for col1 in categorical_columns:
         if col1 == col2:
             categorical_corr.loc[col1, col2] = 1.0
         else:
-            confusion_matrix = pd.crosstab(coleoptera_completa_mundo_especie_colombia[col1], coleoptera_completa_mundo_especie_colombia[col2])
+            confusion_matrix = pd.crosstab(coleoptera_completa_colombia_sinna[col1], coleoptera_completa_colombia_sinna[col2])
             categorical_corr.loc[col1, col2] = cramers_v(confusion_matrix.to_numpy())
 
 # Grafica la matriz de Cramér's V
@@ -458,8 +451,17 @@ print("R-squared:", r2)
 
 # Exportar modelo lineal
 dump(model_linear, 'modelo_lineal_entrenado.pkl')
-# model_linear = load('modelo_lineal_entrenado.pkl') # usar para cargar el modelo
+model_linear = load('modelo_lineal_entrenado.pkl') # usar para cargar el modelo
 
+# Gráfico: Predicción vs. Real
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, y_pred, alpha=0.6)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+plt.xlabel("Valores reales")
+plt.ylabel("Valores predichos")
+plt.title("Regresión múltiple: Predicción vs Real")
+plt.grid(True)
+plt.show()
 
 #### Modelo número 1, perceptrón multicapa
 model = Sequential()
@@ -488,6 +490,25 @@ model.save('dnn_simple.keras')
 dnn_simple = tf.keras.models.load_model('dnn_simple.keras')
 
 plot_model(model, to_file='dnn_simple.png', show_shapes=True, show_layer_names=True)
+
+
+# Graficar los resultados
+plt.plot(history.history['mae'])
+plt.plot(history.history['val_mae'])
+plt.title('model mae')
+plt.ylabel('mae')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.show()
+
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.show()
+
 
 #### Modelo número 2, red neuronal profunda sin datos estandarizados optimizando los hiperparámetros
 np.random.seed(42)
@@ -560,10 +581,7 @@ loss, mae = best_model_dnn.evaluate(X_test, y_test)
 print("R-squared:", r2)
 print(f"Test Loss: {loss}, Test MAE: {mae}")
 
-
 historySinEscalar = best_model_dnn.fit(X_train, y_train, epochs=50, batch_size=12, validation_data=(X_test, y_test))
-
-
 
 # Resumen del modelo
 best_model.summary()
@@ -653,10 +671,10 @@ with open("model_architecture.json", "w") as json_file:
 # Mostrar la arquitectura del mejor modelo
 best_model_dnn_escalado.summary()
 
+plot_model(best_model_dnn_escalado, to_file='model_plot.png', show_shapes=True, show_layer_names=True)
+
 
 y_pred = best_model_dnn_escalado.predict(X_test)
-
-yprediccion_especies = best_model_dnn_escalado.predict(coleoptera_completa_colombia)
 
 
 r2 = r2_score(y_test, y_pred)
@@ -669,8 +687,6 @@ print(f"Test Loss: {loss}, Test MAE: {mae}")
 
 
 historyEscalado = best_model_dnn_escalado.fit(X_train, y_train, epochs=50, batch_size=12, validation_data=(X_test, y_test))
-
-
 
 # Resumen del modelo
 best_model.summary()
@@ -711,21 +727,21 @@ rf = RandomForestRegressor(random_state=42)
 rf_rs = RandomizedSearchCV(
     estimator=rf,
     param_distributions=rs_param_grid,
-    cv=10,  # Number of folds
-    n_iter=10,  # Number of parameter candidate settings to sample
-    verbose=2,  # The higher this is, the more messages are outputed
-    scoring="neg_mean_absolute_error",  # Metric to evaluate performance
+    cv=10,  # Número de folds
+    n_iter=10,  # Número de parámetros candidados a muestrear
+    verbose=2,  
+    scoring="neg_mean_absolute_error",  # Error medio absoluto negativo como métrica
     random_state=42
 )
 
-# Train the model on the training set
+# TEntrenar el modelo con los datos de entrenamiento
 rf_rs.fit(X_train, y_train)
 
-# Print the best parameters and highest accuracy
+# Imprimir los mejores parámetros
 print("Best parameters found: ", rf_rs.best_params_)
 print("Best performance: ", rf_rs.best_score_)
 
-# Predict the outcomes on the test set
+# Predecir el valor para calcular las métricas
 y_pred = rf_rs.predict(X_test)
 print("Mean Absolute Error:", mean_absolute_error(y_test, y_pred))
 print("Mean Squared Error:", mean_squared_error(y_test, y_pred))
@@ -743,11 +759,11 @@ best_rf = rf_rs.best_estimator_
 # Extraer el primer árbol del random forest
 tree = best_rf.estimators_[0] 
 
-# Plot it
-plt.figure(figsize=(20, 10))  # You can adjust the size
+# Hacer la figura del primer random forest
+plt.figure(figsize=(20, 10))
 plot_tree(
     tree,
-    feature_names=X.columns,   # if X is a DataFrame
+    feature_names=X.columns,
     filled=True,
     rounded=True
 )
@@ -769,7 +785,7 @@ plt.show()
 ###### Validación cruzada k-fold del mejor modelo DNN escalado #####
 
 
-# Convertir X, y a arrays de numpy si no lo son
+# Convertir X, Y a arrays de numpy si no lo son
 X = np.array(X)
 y = np.array(y)
 
@@ -857,6 +873,11 @@ best_model_rf
 
 model = best_model_dnn_escalado
  
+
+coleoptera_completa_colombia = pd.read_csv('coleoptera_completa_le.txt', encoding = "utf8", sep="\t")
+coleoptera_completa_colombia = coleoptera_completa_colombia.drop(columns=['Unnamed: 0'])
+
+
 # Quitar la columna NumeroEspeciesFamilia del conjunto a predecir
 coleoptera_completa_colombia = coleoptera_completa_colombia.loc[:, coleoptera_completa_colombia.columns != "NumeroEspeciesFamilia"] 
 # Escalar los datos en caso que use el modelo escalado
@@ -913,12 +934,8 @@ pivot_table_rounded.to_excel('tabla_resumen_estimaciones_colombia.xlsx')
 
 ##### Predicción número de especies para Coleoptera de Antioquia con el mejor modelo
 
-# Cargar solamente los datos ajustados
-# coleoptera_completa_colombia_sinna = pd.read_csv('coleoptera_completa_sinna.txt', encoding = "utf8", sep="\t")
-# coleopteros_colombia_etiquetados_antioquia = coleopteros_colombia_etiquetados_antioquia.drop(columns=['Coordinates','gbifID','occurrenceID','kingdom','phylum','class', 'order', 'stateProvince','infraspecificEpithet','license'])
 
 coleopteros_colombia_etiquetados_antioquia=coleoptera_completa_colombia.loc[coleoptera_completa_colombia['departamento'] == 'Antioquia' ]
-
 
 
 categorical_columns = coleopteros_colombia_etiquetados_antioquia.select_dtypes(include=['object']).columns

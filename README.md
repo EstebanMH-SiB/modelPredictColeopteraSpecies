@@ -2,14 +2,21 @@
 
 Este repositorio contiene el script utilizado en el Proyecto Aplicado para optar al título de Magister en Ciencia de Datos de Esteban Marentes.
 
-El proceso se llevo a cabo en la IDE Spyder al interior de Anaconda, y ejecutar todo el script toma aproximadamente 5-6 horas usando un computador con un procesador 2.3 GHz intel Core i9 de 8 núcleos, una memoria RAM de 16 GB y una tarjeta gráfica AMD Radep Pro 5500M 4 GB.
+El proceso se llevó a cabo en la IDE [Spyder v6](https://www.spyder-ide.org/) al interior de Anaconda. Ejecutar todo el script toma aproximadamente 5-6 horas usando un computador con un procesador 2.3 GHz intel Core i9 de 8 núcleos, una memoria RAM de 16 GB y una tarjeta gráfica AMD Radep Pro 5500M 4 GB.
 
 Pasos para ejecutar el script:
 
-1. Instalar el ambiente usando el archivo 'requirements.yml', se recomienda hacerlo en Anaconda siguiendo la guía [Environments](https://www.anaconda.com/docs/tools/working-with-conda/environments#creating-an-environment). Es posible que el ambiente no installe las librerías listadas bajo pip, en ese caso debe instalarla manualmente luego de ingresar a Spyder.
-2. Descargar todos los archivos indicados en el archivo '[informacion_capas.md](https://github.com/EstebanMH-SiB/modelPredictColeopteraSpecies/blob/main/datos_capas/informacion_capas.md)'
+1. Instalar el ambiente usando el archivo 'requirements.yml', se recomienda hacerlo en [Anaconda o Miniconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) siguiendo la guía [Environments](https://www.anaconda.com/docs/tools/working-with-conda/environments#creating-an-environment-from-a-yml-file).
+    > Es posible que el ambiente no installe las librerías listadas bajo pip, en ese caso deberá instalarlas manualmente luego de ingresar a Spyder.
+2. Descargar todos los archivos indicados en el archivo [`informacion_capas.md`](./datos_capas/informacion_capas.md)
 3. Abrir el archivo '[emh_prediccionnumeroespeciescoleopteraantioquia.py](https://github.com/EstebanMH-SiB/modelPredictColeopteraSpecies/blob/main/emh_prediccionnumeroespeciescoleopteraantioquia.py)' en Spyder
-4. Modificar la línea 39 con el directorio donde están guardados los documentos del paso 2.
+    > Asegúrese de que el intérprete de spider corresponda al ambiente de conda creado a partir del archivo del punto 1.
+    >
+    >Para configurar el intérprete en spider ver `Q: How do I get Spyder to work with my existing Python packages/environment?` en el [faq de spider](https://docs.spyder-ide.org/current/faq.html).
+    >
+    >Para determinar el intérprete del ambiente de conda [ver aquí](https://www.anaconda.com/docs/tools/working-with-conda/ide-tutorials/python-path).
+
+4. Modificar la [línea 39](./emh_prediccionnumeroespeciescoleopteraantioquia.py#L39-L40) con el directorio donde están guardados los documentos del paso 2.
 5. Ejecutar la importación de librerías para verificar que el ambiente está correcto.
 6. Correr el script, se recomienda hacerlo por etapas para ir verificando los resultado y evitar errores en el código. Esto puede tomar al menos 5 horas en total, dependiendo de la capacidad del equipo. No se recomienda correr todo el script de una vez, aunque posible podrían encontrarse errores inesperados que creen conflictos.
 7. En la fila 874 puede cambiar el modelo con el que desea hacer la predicción, por defecto está el que dió un mejor resultado en el trabajo de grado best_model_dnn_escalado.

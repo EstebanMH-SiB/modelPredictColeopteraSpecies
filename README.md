@@ -1,6 +1,6 @@
 # Modelo de predicción para el número de especies de Coleoptera en el Departamento de Antioquia
 
-Este repositorio contiene el script utilizado en el Proyecto Aplicado para optar al título de Magister en Ciencia de Datos de Esteban Marentes.
+Este repositorio contiene el script utilizado en el Proyecto Aplicado para optar al título de Magister en Ciencia de Datos de Esteban Marentes. EL resultado completo de la tesis de grado puede ser consultado en: https://vitela.javerianacali.edu.co/items/24c7c53a-1ed7-4e33-9fb7-ba4325fee24c
 
 El proceso se llevó a cabo en la IDE [Spyder v6](https://www.spyder-ide.org/) al interior de Anaconda. Ejecutar todo el script toma aproximadamente 5-6 horas usando un computador con un procesador 2.3 GHz intel Core i9 de 8 núcleos, una memoria RAM de 16 GB y una tarjeta gráfica AMD Radep Pro 5500M 4 GB.
 
